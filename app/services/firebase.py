@@ -2,6 +2,9 @@ import os, json
 from functools import lru_cache
 import firebase_admin
 from firebase_admin import credentials, firestore as fa_firestore, storage
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def initialize_firebase():
     """Initialize Firebase app once with both Firestore and Storage."""

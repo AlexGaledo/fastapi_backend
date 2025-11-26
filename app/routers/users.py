@@ -82,3 +82,32 @@ def retrieve_wallet_info(req: WalletRequest):
             status_code=500,
             detail="Internal error while retrieving wallet information."
         )
+
+
+@router.post("/getUserInfo")
+def get_user_info(request: WalletRequest):
+    """Simple endpoint to check if user exists."""
+    if not request.walletAddress:
+        raise HTTPException(status_code=400, detail="Wallet address is required.")
+    
+    try:
+        query = db.collection("Users") \
+          .where("wallet_address","==", request.walletAddress) \
+          .limit(1) \
+          .get()
+
+        if not query:
+            return {"exists": False}
+
+        data = query[0].to_dict()  # just to ensure data integrity
+
+        return {"userInfo": data, "exists": True}
+
+    except Exception as e:
+        logging.error(f"Error checking user existence for {request.walletAddress}: {e}")
+        logging.error(traceback.format_exc())
+
+        raise HTTPException(
+            status_code=500,
+            detail="Internal error while checking user existence."
+        )
