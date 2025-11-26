@@ -1,17 +1,23 @@
-import os
+import os, json
 from functools import lru_cache
 import firebase_admin
 from firebase_admin import credentials, firestore as fa_firestore, storage
 
-
 def initialize_firebase():
-	"""Initialize Firebase app once with both Firestore and Storage."""
-	if not firebase_admin._apps:
-		cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "./firebase_key.json")
-		cred = credentials.Certificate(cred_path)
-		firebase_admin.initialize_app(cred, {
-			'storageBucket': 'hackconnect-v2.firebasestorage.app'
-		})
+    """Initialize Firebase app once with both Firestore and Storage."""
+    if not firebase_admin._apps:
+        cred_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+        if cred_json is None:
+            raise Exception("Missing GOOGLE_APPLICATION_CREDENTIALS env variable")
+
+        cred_dict = json.loads(cred_json)  # convert JSON string → Python dict
+        cred = credentials.Certificate(cred_dict)
+
+        firebase_admin.initialize_app(cred, {
+            'storageBucket': 'hackconnect-v2.firebasestorage.app'
+        })
+
 
 
 @lru_cache(maxsize=1)
