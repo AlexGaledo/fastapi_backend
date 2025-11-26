@@ -1,23 +1,33 @@
 import os
 from functools import lru_cache
 import firebase_admin
-from firebase_admin import credentials, firestore as fa_firestore
+from firebase_admin import credentials, firestore as fa_firestore, storage
+
+
+def initialize_firebase():
+	"""Initialize Firebase app once with both Firestore and Storage."""
+	if not firebase_admin._apps:
+		cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "./firebase_key.json")
+		cred = credentials.Certificate(cred_path)
+		firebase_admin.initialize_app(cred, {
+			'storageBucket': 'hackconnect-v2.firebasestorage.app'
+		})
 
 
 @lru_cache(maxsize=1)
 def get_db():
-	"""Return a singleton Firestore client.
-
-	Initializes the Firebase app once. The path to the service account JSON
-	can be set via the environment variable GOOGLE_APPLICATION_CREDENTIALS.
-	Falls back to a local file name `firebase_key.json` if not set.
-	"""
-	if not firebase_admin._apps:  # Avoid re-initializing on reloads
-		cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "./firebase_key.json")
-		cred = credentials.Certificate(cred_path)
-		firebase_admin.initialize_app(cred)
+	"""Return a singleton Firestore client."""
+	initialize_firebase()
 	return fa_firestore.client()
 
 
-# Convenience alias if you prefer direct import usage:
+@lru_cache(maxsize=1)
+def get_storage_bucket():
+	"""Return the Firebase Storage bucket."""
+	initialize_firebase()
+	return storage.bucket()
+
+
+# Convenience aliases
 db = get_db()
+storage_bucket = get_storage_bucket()
