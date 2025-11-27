@@ -16,6 +16,16 @@ class WalletInfoResponse(BaseModel):
 class WalletRequest(BaseModel):
     walletAddress: str | None
 
+class taskResponse(BaseModel):
+    eventId: str | None
+    taskDescription: str | None
+    taskId: str | None
+    taskTitle: str | None
+    taskRewards: int | None
+    claimed: bool | None
+    walletAddress: str | None
+    identifier: str | None
+
 
 router = APIRouter()
 
@@ -84,30 +94,51 @@ def retrieve_wallet_info(req: WalletRequest):
         )
 
 
-@router.post("/getUserInfo")
-def get_user_info(request: WalletRequest):
-    """Simple endpoint to check if user exists."""
-    if not request.walletAddress:
-        raise HTTPException(status_code=400, detail="Wallet address is required.")
-    
+@router.get("/retrieveTasks/{wallet_address}")
+def get_task_logs(wallet_address: str):
+    """Return list of tasks for user."""
+    if not wallet_address:
+        raise HTTPException(status_code=404, detail="missing wallet_address")
+
     try:
-        query = db.collection("Users") \
-          .where("wallet_address","==", request.walletAddress) \
-          .limit(1) \
-          .get()
+        query = db.collection('Task_logs') \
+            .where("walletAddress", "==", wallet_address) \
+            .get()
 
-        if not query:
-            return {"exists": False}
+        # If Firestore returns None (unexpected), treat as not found
+        if query is None:
+            raise HTTPException(status_code=404, detail="user/task not found")
 
-        data = query[0].to_dict()  # just to ensure data integrity
+        tasks = []
+        for doc in query:
+            data = doc.to_dict()
+            if not data:
+                raise HTTPException(status_code=500, detail="corrupted task data")
 
-        return {"userInfo": data, "exists": True}
+            # Use a simple dict format matching frontend expectations
+            tasks.append({
+                "eventId": data.get("eventId"),
+                "taskId": doc.id,
+                "taskTitle": data.get("taskTitle"),
+                "taskDescription": data.get("taskDescription"),
+                "taskRewards": data.get("taskRewards"),
+                "claimed": data.get("claimed"),
+                "walletAddress": data.get("walletAddress"),
+                "identifier": data.get("identifier")
+            })
 
+        # Return tasks under `tasks` key (frontend expects `response.data.tasks`)
+        return {"tasks": tasks}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error checking user existence for {request.walletAddress}: {e}")
         logging.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error retrieving task logs: {str(e)}")
 
-        raise HTTPException(
-            status_code=500,
-            detail="Internal error while checking user existence."
-        )
+
+@router.post("/createTasks/{wallet_address}")
+def create_task(wallet_address: str):
+    """Create a new task for user."""
+    # TODO: implement task creation
+    raise HTTPException(status_code=501, detail="Not implemented")

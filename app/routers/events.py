@@ -283,11 +283,15 @@ def join_event(event_id: str, wallet_address: str, payload: JoinEventPayload):
     """Add a wallet address to an event's participants, generates and stores QR-code."""
     
     try:
-        # Create QR payload with ticket information
+        # Generate unique ticket ID first
+        ticket_id = str(uuid.uuid4())
+        
+        # Create QR payload with ticket information (including ticketId)
         qr_payload = {
-            "eventTitle":payload.eventTitle,
+            "eventTitle": payload.eventTitle,
             "eventId": event_id,
             "walletAddress": wallet_address,
+            "ticketId": ticket_id,
             "purchasedAt": dt.datetime.now().isoformat(),
             "priceBought": payload.priceBought,
             "tierName": payload.tierName,
@@ -317,8 +321,7 @@ def join_event(event_id: str, wallet_address: str, payload: JoinEventPayload):
         img.save(img_byte_arr, 'PNG')  # PIL Image.save takes format as positional arg
         img_byte_arr.seek(0)
         
-        # Generate unique filename
-        ticket_id = str(uuid.uuid4())
+        # Generate filename
         qr_filename = f"{ticket_id}.png"
         
         # Upload to Firebase Storage
@@ -341,7 +344,8 @@ def join_event(event_id: str, wallet_address: str, payload: JoinEventPayload):
             "ticketId": ticket_id,
             "qrCodeUrl": qr_url,
             "qrCodePath": blob_path,
-            "purchasedAt": dt.datetime.now(),
+            "purchasedAtTimestamp": dt.datetime.now(),  # Keep datetime for queries
+            # purchasedAt from qr_payload (ISO string) is preserved for signature verification
         }
         
         # Save ticket to Firestore
@@ -410,53 +414,92 @@ def get_ticket(ticket_id: str):
         raise HTTPException(status_code=500, detail=f"Error retrieving ticket: {str(e)}")
 
 
-@router.post("/verifyTicket")
-def verify_ticket(qr_data: dict):
-    """Verify a ticket's authenticity using its signature."""
+@router.post("/verifyTicket/{event_id}")
+def verify_ticket(event_id: str, qr_data: dict):
+    """Verify a ticket's authenticity using its signature and check it in."""
     try:
-        signature = qr_data.pop("signature", None)
+        # Handle nested qr_data if sent from frontend
+        if "qr_data" in qr_data:
+            qr_data = qr_data["qr_data"]
+        
+        signature = qr_data.get("signature")
         if not signature:
             raise HTTPException(status_code=400, detail="Missing signature")
         
-        # Regenerate signature from data
-        expected_signature = generate_signature(qr_data)
+        # Get ticket ID first to fetch original data
+        ticket_id = qr_data.get("ticketId")
+        if not ticket_id:
+            raise HTTPException(status_code=400, detail="Missing ticket ID")
+        
+        doc_ref = db.collection("Tickets").document(ticket_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        
+        ticket_data = doc.to_dict()
+        if not ticket_data:
+            raise HTTPException(status_code=500, detail="Ticket data is corrupted")
+        
+        # Verify ticket belongs to this event
+        ticket_event_id = ticket_data.get("eventId")
+        if ticket_event_id != event_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Ticket does not belong to this event."
+            )
+        
+        # Handle purchasedAt field (might be string or Firestore timestamp for old tickets)
+        purchased_at = ticket_data.get("purchasedAt")
+        if isinstance(purchased_at, str):
+            # New tickets - already ISO string
+            purchased_at_str = purchased_at
+        elif purchased_at and hasattr(purchased_at, "isoformat"):
+            # Old tickets - datetime object
+            purchased_at_str = purchased_at.isoformat()
+        elif purchased_at and hasattr(purchased_at, "to_datetime"):
+            # Old tickets - Firestore timestamp
+            purchased_at_str = purchased_at.to_datetime().isoformat()
+        else:
+            # Fallback
+            purchased_at_str = str(purchased_at) if purchased_at else ""
+        
+        # Build the original payload from stored ticket data
+        original_payload = {
+            "eventTitle": ticket_data.get("eventTitle"),
+            "eventId": ticket_data.get("eventId"),
+            "walletAddress": ticket_data.get("walletAddress"),
+            "ticketId": ticket_data.get("ticketId"),
+            "purchasedAt": purchased_at_str,
+            "priceBought": ticket_data.get("priceBought"),
+            "tierName": ticket_data.get("tierName"),
+            "status": ticket_data.get("status"),
+        }
+        
+        # Generate expected signature from original data
+        expected_signature = generate_signature(original_payload)
         
         if signature != expected_signature:
-            return {
-                "valid": False,
-                "message": "Invalid ticket signature"
-            }
+            raise HTTPException(status_code=400, detail="Invalid ticket signature")
         
-        # Check if ticket exists and is active
-        ticket_id = qr_data.get("ticketId")
-        if ticket_id:
-            doc_ref = db.collection("Tickets").document(ticket_id)
-            doc = doc_ref.get()
-            
-            if not doc.exists:
-                return {
-                    "valid": False,
-                    "message": "Ticket not found"
-                }
-            
-            ticket_data = doc.to_dict()
-            if not ticket_data:
-                return {
-                    "valid": False,
-                    "message": "Ticket data is corrupted"
-                }
-            if ticket_data.get("status") != "active":
-                return {
-                    "valid": False,
-                    "message": "Ticket is not active"
-                }
+        current_status = ticket_data.get("status")
         
-        doc_ref.update({"status": "checkedIn"})
+        if current_status == "checkedIn":
+            raise HTTPException(status_code=400, detail="Ticket has already been checked in")
+        
+        if current_status != "active":
+            raise HTTPException(status_code=400, detail=f"Ticket is not active. Current status: {current_status}")
+        
+        # Update status to checkedIn and add timestamp
+        doc_ref.update({
+            "status": "checkedIn",
+            "checkedInAt": dt.datetime.now()
+        })
 
         return {
             "status": "checkedIn",
             "valid": True,
-            "message": "Ticket is valid",
+            "message": "Ticket is valid and checked in successfully",
             "data": qr_data
         }
         
@@ -610,3 +653,95 @@ def update_ticket_status(ticketId: str, ticket_payload: updateTicketStatusPayloa
     except Exception as e:
         logging.error("Error updating ticket status: %s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error updating ticket status: {str(e)}")
+    
+
+@router.get("/downloadTicketQr/{ticket_id}")
+def download_ticket_qr(ticket_id: str):
+    """Download the QR code image for a given ticket ID."""
+    try:
+        doc_ref = db.collection("Tickets").document(ticket_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Ticket not found.")    
+        
+        ticket_data = doc.to_dict()
+        if not ticket_data:
+            raise HTTPException(status_code=500, detail="Ticket data is corrupted.")
+        
+        qr_code_path = ticket_data.get("qrCodePath")
+        if not qr_code_path:
+            raise HTTPException(status_code=404, detail="QR code path not found for this ticket.")
+        
+        bucket = storage_bucket
+        blob = bucket.blob(qr_code_path)
+        
+        if not blob.exists():
+            raise HTTPException(status_code=404, detail="QR code image not found in storage.")
+        
+        qr_image_url = blob.public_url
+        
+        return {
+            "ticketId": ticket_id,
+            "qrCodeUrl": qr_image_url
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error("Error downloading ticket QR code: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error downloading ticket QR code: {str(e)}")
+
+
+@router.post("/downloadAttendeesList/{event_id}")
+def download_attendees_list(event_id: str):
+    """Generate and provide a download link for the attendees list of a given event (xlsx)."""
+    try:
+        import pandas as pd
+        from io import BytesIO
+
+        query = db.collection("Tickets")\
+        .where("eventId", "==", event_id)\
+        .get()
+
+        attendees = []
+        for doc in query:
+            data = doc.to_dict()
+            if not data:
+                continue
+            attendees.append(data)
+        
+        if not attendees:
+            raise HTTPException(status_code=404, detail="No attendees found for this event.")
+        
+        df = pd.DataFrame(attendees)
+        excel_buffer = BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Attendees')
+        
+        excel_buffer.seek(0)
+        
+        # Upload to Firebase Storage
+        bucket = storage_bucket
+        blob_path = f"events/{event_id}/attendees_list.xlsx"
+        blob = bucket.blob(blob_path)
+        
+        blob.upload_from_file(
+            excel_buffer,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+        blob.make_public()
+        download_url = blob.public_url
+        
+        return {
+            "eventId": event_id,
+            "attendeesCount": len(attendees),
+            "downloadUrl": download_url
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error("Error downloading attendees list: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error downloading attendees list: {str(e)}")
