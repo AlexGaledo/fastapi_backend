@@ -137,8 +137,25 @@ def get_task_logs(wallet_address: str):
         raise HTTPException(status_code=500, detail=f"Error retrieving task logs: {str(e)}")
 
 
+#create / refresh set of tasks for users
 @router.post("/createTasks/{wallet_address}")
 def create_task(wallet_address: str):
     """Create a new task for user."""
     # TODO: implement task creation
     raise HTTPException(status_code=501, detail="Not implemented")
+
+
+@router.get("/claimTask/{task_id}")
+def claim_task(task_id: str):
+    """Claim a task for user."""    
+    if task_id is None:
+        raise HTTPException(status_code=404, detail="missing task_id")
+    
+    try:
+        # Update claimed status
+        db.collection('Task_logs').document(task_id).update({"claimed": True})
+        return {"message": "Task claimed successfully."}
+    
+    except Exception as e:
+        logging.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error claiming task: {str(e)}")
