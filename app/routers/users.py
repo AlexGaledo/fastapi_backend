@@ -159,3 +159,4 @@ def claim_task(task_id: str):
     except Exception as e:
         logging.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error claiming task: {str(e)}")
+    

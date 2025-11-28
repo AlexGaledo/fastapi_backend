@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from .routers import users, events
+from .routers import users, events, chatbot
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -28,5 +28,6 @@ def create_app() -> FastAPI:
 
     app.include_router(users.router, prefix="/users", tags=["users"])
     app.include_router(events.router, prefix="/events", tags=["events"])
+    app.include_router(chatbot.router, prefix="/chatbot", tags=["chatbot"])
 
     return app
