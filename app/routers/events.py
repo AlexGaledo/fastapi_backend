@@ -693,7 +693,7 @@ def download_ticket_qr(ticket_id: str):
         raise HTTPException(status_code=500, detail=f"Error downloading ticket QR code: {str(e)}")
 
 
-@router.post("/downloadAttendeesList/{event_id}")
+@router.get("/downloadAttendeesList/{event_id}")
 def download_attendees_list(event_id: str):
     """Generate and provide a download link for the attendees list of a given event (xlsx)."""
     try:
