@@ -709,6 +709,16 @@ def download_attendees_list(event_id: str):
             data = doc.to_dict()
             if not data:
                 continue
+            
+            # Convert Firestore timestamps to timezone-unaware datetime objects
+            for key, value in data.items():
+                if hasattr(value, 'to_datetime'):
+                    # Firestore timestamp - convert to timezone-unaware datetime
+                    data[key] = value.to_datetime().replace(tzinfo=None)
+                elif isinstance(value, dt.datetime) and value.tzinfo is not None:
+                    # Timezone-aware datetime - convert to timezone-unaware
+                    data[key] = value.replace(tzinfo=None)
+            
             attendees.append(data)
         
         if not attendees:
